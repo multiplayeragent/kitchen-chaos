@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kitchen Chaos</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #2b2140; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; touch-action: none; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 2px 4px #0008; font-weight: 800; }
+  #score { top: max(12px, env(safe-area-inset-top)); left: max(14px, env(safe-area-inset-left)); font-size: 24px; line-height: 1.1; }
+  #score small { display: block; font-size: 13px; font-weight: 600; opacity: .85; }
+  #clock { top: max(12px, env(safe-area-inset-top)); right: max(14px, env(safe-area-inset-right)); font-size: 26px; font-variant-numeric: tabular-nums; }
+  #clock.low { color: #ff6b6b; }
+  #orders { top: calc(max(12px, env(safe-area-inset-top)) + 2px); left: 50%; transform: translateX(-50%); display: flex; gap: 8px; text-shadow: none; }
+  .ticket { width: 84px; padding: 6px 6px 8px; border-radius: 10px; background: #fff8e8; color: #3a2a14; font-size: 12px; text-align: center; box-shadow: 0 4px 0 #0003; animation: drop .35s ease-out; }
+  .ticket b { display: block; font-size: 13px; margin-bottom: 4px; }
+  .ticket i { display: inline-block; width: 15px; height: 15px; border-radius: 50%; margin: 0 1px; border: 2px solid #0002; }
+  .ticket u { display: block; height: 5px; margin-top: 5px; border-radius: 3px; background: #52d273; }
+  @keyframes drop { from { transform: translateY(-30px); opacity: 0; } }
+  #net { bottom: max(10px, env(safe-area-inset-bottom)); left: max(14px, env(safe-area-inset-left)); font-size: 12px; font-weight: 600; opacity: .8; }
+  #count { inset: 0; display: grid; place-items: center; font-size: min(18vw, 120px); color: #ffd23f; -webkit-text-stroke: 3px #5a2a00; }
+  #hint { bottom: calc(max(12px, env(safe-area-inset-bottom)) + 120px); left: 50%; transform: translateX(-50%); width: min(460px, 86vw); text-align: center; font-size: 15px; font-weight: 600; padding: 10px 14px; border-radius: 14px; background: #1b1530cc; transition: opacity .5s; }
+  #toast { top: 30%; left: 0; right: 0; text-align: center; font-size: 24px; opacity: 0; transition: opacity .3s; }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #0007; }
+  #over[hidden], .pad[hidden] { display: none; }
+  .card { width: min(340px, 88vw); padding: 22px; border-radius: 16px; background: #2b2140; border: 1px solid #ffffff2a; text-align: center; }
+  .card h2 { margin: 0 0 4px; font-size: 23px; } .card h3 { margin: 14px 0 4px; font-size: 14px; color: #ffd23f; }
+  .card ol { text-align: left; margin: 0 0 14px; padding-left: 26px; font-size: 14px; } .card li span { float: right; }
+  .card p { margin: 6px 0; font-size: 14px; opacity: .85; }
+  button.go { width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #ffd23f; color: #3a2400; font: 800 17px system-ui, sans-serif; cursor: pointer; }
+  .pad { position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(20px, env(safe-area-inset-bottom)); display: flex; gap: 14px; align-items: flex-end; }
+  .pad button { width: 84px; height: 84px; border-radius: 50%; border: 2px solid #ffffff88; background: #ffffff22; color: #fff; font: 800 14px system-ui, sans-serif; touch-action: none; }
+  .pad button.on { background: #ffd23f66; }
+  @media (max-aspect-ratio: 10/11) { #hint { top: 20%; bottom: auto; } }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+<script type="importmap">{ "imports": { "three": "./libs/three.module.min.js" } }</script>
+</head>
+<body>
+<div class="hud" id="score"></div>
+<div class="hud" id="clock"></div>
+<div class="hud" id="orders"></div>
+<div class="hud" id="net">Connecting…</div>
+<div class="hud" id="count"></div>
+<div class="hud" id="toast"></div>
+<div class="hud" id="hint"></div>
+<div class="pad" id="pad" hidden><button data-k="chop">CHOP</button><button data-k="grab">GRAB</button></div>
+<div id="over" hidden><div class="card">
+  <h2 id="overTitle"></h2><p id="overSub"></p>
+  <h3>Best kitchens</h3><ol id="board"><li>Loading…</li></ol>
+  <button class="go" id="again">Play again</button><p id="overNext"></p>
+</div></div>
+<script type="module">
+/* ═══ KITCHEN CHAOS · a Multiplayer Agent starter ═══════════════════════════════════════
+ * Chop, cook and serve before the orders run out. Co-op, 2–4 players; AI cooks fill empty seats.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ round length, timers, scoring, the kitchen layout and the recipes
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   KITCHEN ....... the layout: which tile is a counter, crate, board, stove, window...
+ *   GAME (HOST) ... rounds, orders, every item and what grab/drop/chop/serve do to it,
+ *                   the AI cooks. Only the host runs this and writes shared state.
+ *   SCENE ......... the 3D kitchen, food, chefs, progress bars, particles
+ *   ME ............ walking, facing, which station you are looking at, your intents
+ *   HUD & RESULTS . tickets, score, clock, results and the leaderboard
+ *   INPUT ......... keyboard, touch stick, buttons
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - The HOST is the lowest sessionId among live players (heartbeat `hb` seen in the
+ *     last 3s), worked out every frame. The host's browser runs the kitchen.
+ *   - The host writes: `game` (ONE JSON field: id, v, phase, timers, score, the open
+ *     orders; `v` goes up on every write), `items` (every ingredient and plate: what it is,
+ *     how chopped or cooked, and where it is: a station or someone's hands) and `bots`.
+ *     Cooking is a timestamp (when the meat went on the stove), so everyone sees the same
+ *     sizzle and a new host carries on. A new host adopts all of it.
+ *   - Each player writes its OWN entity: `p` (position and facing, ~12/s), `n`/`c`
+ *     (name, color) and `hb` once a second. What you hold is whatever `items` says.
+ *   - Intents to the host, each naming a station: "grab", "drop", "chop", "serve".
+ *     The host checks you are standing at it, then moves the items. Its own apply directly.
+ *   - ?attract plays offline with AI cooks only (the preview video is recorded from it).
+ *   - Leaderboard "kitchen-score": the team's score at the end of a round.
+ */
+import * as THREE from "three";
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  roundMs: 180000,       // a round lasts 3 minutes
+  readyMs: 3000,         // the countdown before service
+  resultsMs: 15000,      // the results show this long, then a new round starts
+  orderEvery: 12000,     // a new ticket this often...
+  maxOrders: 4,          // ...while fewer than this many are open
+  orderMs: 60000,        // a ticket's time limit
+  points: 20,            // a served order, plus a tip of up to `tip` for a fast one
+  tip: 10,
+  missed: 10,            // points lost when a ticket runs out
+  chops: 5,              // chops to cut a vegetable
+  cookMs: 5000,          // meat on the stove: cooked after this...
+  burnMs: 12000,         // ...and burnt after this
+  speed: 4.2,            // chef speed, tiles/s
+  seats: 3,              // AI cooks fill the kitchen up to this many chefs
+  botPace: 0.8,          // AI cooks walk at this share of your speed
+  board: "kitchen-score",
+  // The kitchen, one character per tile:
+  //  . floor   # counter   K chopping board   S stove   P plates   W serving window   X bin
+  //  T tomato crate   L lettuce crate   M meat crate   B bun crate
+  layout: [
+    "##TLMB#PP##",
+    "#.........W",
+    "K.........W",
+    "K...###...#",
+    "#.........X",
+    "S.........#",
+    "##SS#K#####",
+  ],
+  // Recipes: parts are l (chopped lettuce), t (chopped tomato), m (cooked meat), b (bun).
+  recipes: [
+    { name: "Salad", parts: "lt" },
+    { name: "Burger", parts: "bm" },
+    { name: "Deluxe", parts: "blm" },
+  ],
+};
+const PART = { l: { name: "lettuce", color: "#6cc24a" }, t: { name: "tomato", color: "#ff5a4a" }, m: { name: "meat", color: "#8a4b2a" }, b: { name: "bun", color: "#e8b05a" } };
+const BOT_NAMES = ["Chef Bo", "Remy", "Gusto", "Pepper", "Basil", "Nori"];
+const COLORS = ["#ff5a5a", "#4da6ff", "#ffd23f", "#52d273", "#c77dff", "#ff8c42", "#ff6fb5", "#3de0d0"];
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'kitchen-chaos',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+let net = null, S = { entities: { players: {} }, shared: {} };
+const memo = new Map();
+/** A shared JSON field, parsed once per change (read-only: never mutate what this returns). */
+function shared(key, fallback, map = (v) => v) {
+  const raw = S.shared[key], m = memo.get(key);
+  if (m && m.raw === raw) return m.v;
+  const v = map(parse(raw, fallback));
+  memo.set(key, { raw, v });
+  return v;
+}
+const seenHb = new Map();
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+const isHost = () => livePlayers()[0] === net.sessionId;
+const humans = () => livePlayers().filter((id) => !(ATTRACT && id === net.sessionId));
+
+// ── KITCHEN ─────────────────────────────────────────────────────────────────────────
+const LAYOUT = CONFIG.layout, KW = LAYOUT[0].length, KH = LAYOUT.length;
+const KINDS = { "#": "counter", T: "crate", L: "crate", M: "crate", B: "crate", K: "board", S: "stove", P: "plates", W: "window", X: "bin" };
+const charAt = (s) => (typeof s === "number" ? LAYOUT[Math.floor(s / KW)]?.[s % KW] ?? "" : ""); // "" for a chef's hands
+const kindAt = (s) => KINDS[charAt(s)] || "floor";
+const isFloor = (x, y) => LAYOUT[y]?.[x] === ".";
+/** Every station a chef can reach (a non-floor tile next to the floor), by tile index y*KW+x. */
+const STATIONS = [];
+for (let y = 0; y < KH; y++) for (let x = 0; x < KW; x++) if (!isFloor(x, y) && [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => isFloor(x + dx, y + dy))) STATIONS.push(y * KW + x);
+const sx = (s) => (s % KW) + 0.5, sy = (s) => Math.floor(s / KW) + 0.5; // a station's centre in tile units
+const blocked = (x, y, r) => [[-r, -r], [r, -r], [-r, r], [r, r]].some(([ox, oy]) => !isFloor(Math.floor(x + ox), Math.floor(y + oy)));
+function moveBody(e, dx, dy) { if (!blocked(e.x + dx, e.y, 0.3)) e.x += dx; if (!blocked(e.x, e.y + dy, 0.3)) e.y += dy; }
+/** The floor tile in front of a station that is nearest to (x, y). */
+function spotFor(s, x, y) {
+  const opts = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [(s % KW) + dx, Math.floor(s / KW) + dy]).filter(([a, b]) => isFloor(a, b));
+  opts.sort((p, q) => Math.hypot(p[0] + 0.5 - x, p[1] + 0.5 - y) - Math.hypot(q[0] + 0.5 - x, q[1] + 0.5 - y));
+  return { x: opts[0][0] + 0.5, y: opts[0][1] + 0.5 };
+}
+/** The next tile centre on the shortest walk to (gx, gy) through the floor. */
+function nextStep(x, y, gx, gy) {
+  const key = (a, b) => b * KW + a, goal = key(Math.floor(gx), Math.floor(gy)), from = key(Math.floor(x), Math.floor(y)), dist = new Map([[goal, 0]]), q = [goal];
+  for (let i = 0; i < q.length; i++) { const c = q[i], cx = c % KW, cy = (c / KW) | 0; for (const [a, b] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]) if (isFloor(a, b) && !dist.has(key(a, b))) { dist.set(key(a, b), dist.get(c) + 1); q.push(key(a, b)); } }
+  const cx = Math.floor(x), cy = Math.floor(y); let best = null, bd = dist.get(from) ?? 1e9;
+  for (const [a, b] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]) { const d = dist.get(key(a, b)); if (d !== undefined && d < bd) { bd = d; best = { x: a + 0.5, y: b + 0.5 }; } }
+  return best || { x: gx, y: gy };
+}
+
+// ── GAME (HOST) ─────────────────────────────────────────────────────────────────────
+// An item: { i, k: "L"|"T"|"M"|"B"|"P", st: 0 raw, 1 ready, 2 burnt, at: station index or a chef's id, n: chops, cook start or plate contents }
+const host = { g: null, items: [], bots: new Map(), wasHost: false, dirtyG: false, dirtyI: false, lastG: 0, lastI: 0, lastB: 0, nextId: 1 };
+const hosting = () => isHost() && host.g;
+const game = () => (hosting() ? host.g : shared("game", null));
+const itemList = () => (hosting() ? host.items : shared("items", [], (l) => l.map(([i, k, st, at, n]) => ({ i, k, st, at, n }))));
+const botList = () => (hosting() ? [...host.bots.values()].map((b) => ({ i: b.id, n: b.n, c: b.c, x: b.x, y: b.y, f: b.f })) : shared("bots", []));
+const itemOn = (s) => itemList().find((it) => it.at === s);
+const heldBy = (id) => itemList().find((it) => it.at === id);
+/** What an item will be on a plate: l, t, m or b (once chopped or cooked), or null. */
+const partOf = (it) => (it.k === "B" ? "b" : it.st === 1 && it.k !== "P" ? it.k.toLowerCase() : null);
+const sortStr = (s) => [...s].sort().join("");
+const recipeKey = (r) => sortStr(CONFIG.recipes[r].parts);
+/** Can `part` go onto a plate holding `c`? Only if some recipe still has room for it. */
+const fits = (c, part) => CONFIG.recipes.some((r) => { let rest = r.parts; for (const ch of c + part) { if (!rest.includes(ch)) return false; rest = rest.replace(ch, ""); } return true; });
+const cookedFor = (it, t) => (it.at >= 0 && kindAt(it.at) === "stove" ? t - it.n : it.n || 0); // ms of cooking so far
+
+function newRound() {
+  const g = host.g, t = Date.now();
+  host.g = { id: (g?.id || 0) + 1, v: g?.v || 0, phase: "ready", startAt: t + CONFIG.readyMs, endsAt: t + CONFIG.readyMs + CONFIG.roundMs, score: 0, served: 0, missed: 0, orders: [], nextOrderAt: 0, oid: 1 };
+  host.items = []; host.dirtyG = host.dirtyI = true;
+  if (ATTRACT) attractSetup();
+}
+function addOrder(t) {
+  const g = host.g; g.orders.push({ id: g.oid++, r: Math.floor(Math.random() * CONFIG.recipes.length), at: t, until: t + CONFIG.orderMs });
+  g.nextOrderAt = t + CONFIG.orderEvery; host.dirtyG = true;
+}
+/** Become host: take over the round and every item exactly as state has them. */
+function adopt() {
+  host.g = parse(S.shared.game, null);
+  host.items = parse(S.shared.items, []).map(([i, k, st, at, n]) => ({ i, k, st, at, n }));
+  host.bots.clear();
+  for (const b of parse(S.shared.bots, [])) host.bots.set(b.i, { id: b.i, n: b.n, c: b.c, x: b.x, y: b.y, f: b.f, task: null, wait: 0 });
+  host.nextId = 1 + Math.max(0, ...host.items.map((it) => it.i));
+  if (!host.g) newRound();
+  host.dirtyG = true;
+}
+const posOf = (id) => { if (id === net.sessionId) return me; const b = host.bots.get(id); if (b) return b; return parse(S.entities.players[id]?.p, null); };
+const removeItem = (it) => { host.items = host.items.filter((x) => x !== it); };
+/** Take meat off the stove: it keeps how long it cooked. */
+function offStove(it, t) { if (it.k === "M" && kindAt(it.at) === "stove") it.n = cookedFor(it, t); }
+
+/** One intent from a chef (a player, an AI cook or the host itself), at station s. */
+function applyIntent(type, msg, from) {
+  const g = host.g, s = msg && msg.s, t = Date.now(), who = posOf(from);
+  if (type === "again") { if (g.phase === "over") newRound(); return; }
+  if (g.phase !== "play" || !STATIONS.includes(s) || !who || Math.hypot(who.x - sx(s), who.y - sy(s)) > 1.9) return;
+  const kind = kindAt(s), h = host.items.find((it) => it.at === from), it = host.items.find((x) => x.at === s);
+  const combine = (plate, food) => { const p = partOf(food); if (!p || !fits(plate.n, p)) return false; plate.n = sortStr(plate.n + p); removeItem(food); return true; };
+  if (type === "chop") {
+    if (kind === "board" && it && (it.k === "L" || it.k === "T") && it.st === 0) { it.n = (it.n || 0) + 1; if (it.n >= CONFIG.chops) it.st = 1; fx(from, "chop", s); }
+  } else if (type === "grab") {
+    if (!h && it) { offStove(it, t); it.at = from; }
+    else if (!h && kind === "crate") host.items.push({ i: host.nextId++, k: charAt(s), st: 0, at: from, n: 0 });
+    else if (!h && kind === "plates") host.items.push({ i: host.nextId++, k: "P", st: 0, at: from, n: "" });
+    else if (h && h.k === "P" && it && it.k !== "P") { offStove(it, t); if (!combine(h, it)) { if (it.k === "M" && kindAt(s) === "stove") it.n = t - it.n; return; } }
+    else if (h && h.k !== "P" && it && it.k === "P") { if (!combine(it, h)) return; }
+    else if (h && h.k === "P" && !it && charAt(s) === "B" && fits(h.n, "b")) h.n = sortStr(h.n + "b"); // a bun straight onto the plate
+    else return;
+  } else if (type === "drop") {
+    if (!h) return;
+    if (kind === "bin") { if (h.k === "P") h.n = ""; else removeItem(h); fx(from, "bin", s); }
+    else if (it && it.k === "P" && h.k !== "P") { if (!combine(it, h)) return; }
+    else if (it) return;
+    else if (kind === "counter" || (kind === "board" && (h.k === "L" || h.k === "T")) || (kind === "stove" && h.k === "M" && h.st !== 2)) { h.at = s; if (kind === "stove") h.n = t - (h.n || 0); }
+    else return;
+  } else if (type === "serve") {
+    if (kind !== "window" || !h || h.k !== "P") return;
+    const o = g.orders.find((o) => recipeKey(o.r) === h.n);
+    if (!o) { fx(from, "wrong", s); return; }
+    const tip = Math.round(CONFIG.tip * Math.max(0, (o.until - t) / CONFIG.orderMs));
+    g.orders = g.orders.filter((x) => x !== o); g.score += CONFIG.points + tip; g.served++;
+    removeItem(h); fx(from, "served", s, CONFIG.points + tip);
+    if (g.orders.length < 2) g.nextOrderAt = Math.min(g.nextOrderAt, t + 2500);
+  }
+  host.dirtyI = host.dirtyG = true;
+}
+/** Effects every client shows (an event: sounds and sparkles, never the truth). */
+function fx(from, kind, s, n) { const m = { kind, s, n }; net.send("fx", m); showFx(m); }
+
+function hostTick(dt, now) {
+  if (!host.wasHost) { host.wasHost = true; adopt(); }
+  const g = host.g, t = Date.now();
+  if (g.phase === "ready" && t >= g.startAt) { g.phase = "play"; addOrder(t); addOrder(t - 6000); }
+  if (g.phase === "play") {
+    if (g.orders.length < CONFIG.maxOrders && t >= g.nextOrderAt) addOrder(t);
+    for (const o of g.orders.filter((o) => t > o.until)) { g.orders = g.orders.filter((x) => x !== o); g.score = Math.max(0, g.score - CONFIG.missed); g.missed++; host.dirtyG = true; }
+    for (const it of host.items) if (it.k === "M" && kindAt(it.at) === "stove") { // meat cooks on the stove (from its timestamp)
+      const st = t - it.n >= CONFIG.burnMs ? 2 : t - it.n >= CONFIG.cookMs ? 1 : 0;
+      if (st !== it.st) { it.st = st; host.dirtyI = true; }
+    }
+    if (t >= g.endsAt) { Object.assign(g, { phase: "over", endsAt: t + CONFIG.resultsMs }); host.dirtyG = true; }
+  }
+  if (g.phase === "over" && t >= g.endsAt) newRound();
+  const chefsHere = new Set([...livePlayers(), ...host.bots.keys()]);
+  for (const it of host.items.filter((it) => typeof it.at === "string" && !chefsHere.has(it.at))) { removeItem(it); host.dirtyI = true; } // dropped by someone who left
+  botsTick(dt, t);
+  if (host.dirtyG && now - host.lastG > 150) { host.dirtyG = false; host.lastG = now; host.g.v++; net.setShared("game", JSON.stringify(host.g)); }
+  if (host.dirtyI && now - host.lastI > 80) { host.dirtyI = false; host.lastI = now; net.setShared("items", JSON.stringify(host.items.map((it) => [it.i, it.k, it.st, it.at, it.n]))); }
+  if (now - host.lastB > 90) { host.lastB = now; net.setShared("bots", JSON.stringify(botList().map((b) => ({ ...b, x: +b.x.toFixed(2), y: +b.y.toFixed(2), f: +b.f.toFixed(2) })))); }
+}
+
+/** AI cooks: each picks the next job the open tickets need, walks to the station and does it. */
+function botsTick(dt, t) {
+  const want = Math.max(0, CONFIG.seats - humans().length);
+  while (host.bots.size < want) {
+    const used = new Set([...host.bots.values()].map((b) => b.n)), taken = new Set([myColor, ...Object.values(S.entities.players).map((p) => p.c), ...[...host.bots.values()].map((b) => b.c)]);
+    const id = "b" + Math.random().toString(36).slice(2, 6), spot = spawnSpot(host.bots.size + 2);
+    host.bots.set(id, { id, n: BOT_NAMES.find((n) => !used.has(n)) || "Bot", c: COLORS.find((c) => !taken.has(c)) || COLORS[5], x: spot.x, y: spot.y, f: 0, task: null, wait: 0 });
+  }
+  while (host.bots.size > want) { const id = [...host.bots.keys()].pop(), h = host.items.find((it) => it.at === id); if (h) removeItem(h); host.bots.delete(id); }
+  if (host.g.phase !== "play") return;
+  for (const b of host.bots.values()) cookTick(b, dt, t, (type, s) => applyIntent(type, { s }, b.id));
+}
+/** One AI cook (or, in the preview, you): think of a job, walk to it, do it. */
+function cookTick(b, dt, t, doIt) {
+  b.wait -= dt;
+  if (b.task && t - b.taskAt > 9000) b.task = null; // stuck or waiting too long: think again
+  if (!b.task) {
+    if (b.wait > 0) return;
+    b.task = planJob(b); b.taskAt = t;
+    if (!b.task || b.task.s === undefined) { b.task = null; b.wait = 0.5; return; }
+  }
+  const spot = spotFor(b.task.s, b.x, b.y), d = Math.hypot(spot.x - b.x, spot.y - b.y);
+  if (d > 0.12) {
+    const wp = Math.hypot(Math.floor(spot.x) - Math.floor(b.x), Math.floor(spot.y) - Math.floor(b.y)) > 0 ? nextStep(b.x, b.y, spot.x, spot.y) : spot;
+    const dx = wp.x - b.x, dy = wp.y - b.y, dd = Math.hypot(dx, dy) || 1, step = Math.min(dd, CONFIG.speed * (b === me ? 0.9 : CONFIG.botPace) * dt);
+    moveBody(b, (dx / dd) * step, (dy / dd) * step); b.f = Math.atan2(dy, dx);
+    return;
+  }
+  b.f = Math.atan2(sy(b.task.s) - b.y, sx(b.task.s) - b.x);
+  if (b.wait > 0) return;
+  const it = itemList().find((x) => x.at === b.task.s);
+  if (b.task.type === "chop") { if (!it || it.st !== 0) { b.task = null; return; } doIt("chop", b.task.s); b.wait = 0.28; return; }
+  if (b.task.type === "wait") { if (!it || it.st !== 0) b.task = null; return; }
+  doIt(b.task.type, b.task.s); b.task = null; b.wait = 0.45;
+}
+/** What the open tickets still need that nobody has started: plates and parts, oldest ticket first. */
+function needs(self) {
+  const items = itemList(), g = game(), used = new Set(), out = [];
+  const pool = items.filter((it) => it.k !== "P" && it.st !== 2).map((it) => (it.k === "B" ? "b" : it.k.toLowerCase()));
+  for (const b of host.bots.values()) if (b !== self && b.task && b.task.part) pool.push(b.task.part);
+  for (const o of g.orders) {
+    const R = recipeKey(o.r), plate = items.find((p) => p.k === "P" && !used.has(p) && [...p.n].every((c) => R.includes(c)));
+    if (plate) used.add(plate);
+    let missing = R; for (const c of plate ? plate.n : "") missing = missing.replace(c, "");
+    for (const c of missing) { const j = pool.indexOf(c); if (j >= 0) { pool.splice(j, 1); missing = missing.replace(c, ""); } }
+    out.push({ plate, missing, R });
+  }
+  return out;
+}
+const free = (kind, a) => STATIONS.filter((s) => kindAt(s) === kind && !itemOn(s)).sort((p, q) => Math.hypot(sx(p) - a.x, sy(p) - a.y) - Math.hypot(sx(q) - a.x, sy(q) - a.y))[0];
+const crateFor = (part) => STATIONS.find((s) => charAt(s) === { l: "L", t: "T", m: "M", b: "B" }[part]);
+function planJob(a) {
+  const items = itemList(), h = heldBy(a.id), others = [...host.bots.values()].filter((o) => o !== a && o.task).map((o) => o.task.s);
+  const open = items.filter((it) => typeof it.at === "number" && !others.includes(it.at));
+  const window = STATIONS.find((s) => kindAt(s) === "window"), bin = STATIONS.find((s) => kindAt(s) === "bin");
+  if (h) {
+    if (h.k === "P") {
+      if (game().orders.some((o) => recipeKey(o.r) === h.n)) return { type: "serve", s: window };
+      const food = open.find((it) => partOf(it) && fits(h.n, partOf(it)));
+      if (food) return { type: "grab", s: food.at };
+      if (fits(h.n, "b") && needs(a).some((n) => n.plate === h && n.missing.includes("b"))) return { type: "grab", s: crateFor("b") };
+      return { type: "drop", s: free("counter", a) };
+    }
+    if (h.st === 2) return { type: "drop", s: bin };
+    if ((h.k === "L" || h.k === "T") && h.st === 0) { const s = free("board", a); return s !== undefined ? { type: "drop", s } : { type: "drop", s: free("counter", a) }; }
+    if (h.k === "M" && h.st === 0) { const s = free("stove", a); return s !== undefined ? { type: "drop", s } : { type: "drop", s: free("counter", a) }; }
+    const plate = open.find((it) => it.k === "P" && fits(it.n, partOf(h)));
+    return { type: "drop", s: plate ? plate.at : free("counter", a) };
+  }
+  const burnt = open.find((it) => it.st === 2), cooked = open.find((it) => it.k === "M" && it.st === 1 && kindAt(it.at) === "stove");
+  if (burnt) return { type: "grab", s: burnt.at };
+  if (cooked) return { type: "grab", s: cooked.at }; // off the heat before it burns
+  const done = open.find((it) => it.k === "P" && game().orders.some((o) => recipeKey(o.r) === it.n));
+  if (done) return { type: "grab", s: done.at };
+  const toChop = open.find((it) => kindAt(it.at) === "board" && it.st === 0);
+  if (toChop) return { type: "chop", s: toChop.at };
+  const ready = open.find((it) => partOf(it) && items.some((p) => p.k === "P" && fits(p.n, partOf(it))));
+  if (ready) return { type: "grab", s: ready.at };
+  const stray = open.find((it) => kindAt(it.at) === "counter" && it.st === 0 && (it.k === "M" ? free("stove", a) : it.k === "L" || it.k === "T" ? free("board", a) : undefined) !== undefined);
+  if (stray) return { type: "grab", s: stray.at };
+  for (const n of needs(a)) {
+    const plates = STATIONS.find((s) => kindAt(s) === "plates");
+    if (!n.plate && !others.includes(plates)) return { type: "grab", s: plates };
+    if (n.missing) { const part = n.missing[0]; return { type: "grab", s: crateFor(part), part }; }
+  }
+  const cooking = open.find((it) => it.k === "M" && kindAt(it.at) === "stove" && it.st === 0);
+  return cooking ? { type: "wait", s: cooking.at } : null;
+}
+const spawnSpot = (n) => ({ x: 2.5 + (n % 4) * 2, y: 1.5 + (n % 2) * 3.2 });
+/** ?attract: start mid-service with tickets up, meat on the stoves and a burger half built. */
+function attractSetup() {
+  const g = host.g, t = Date.now();
+  Object.assign(g, { phase: "play", startAt: t, endsAt: t + CONFIG.roundMs, score: 60, served: 3 });
+  for (let i = 0; i < 4; i++) addOrder(t - i * 9000);
+  const at = (ch, n = 0) => STATIONS.filter((s) => charAt(s) === ch)[n];
+  host.items.push({ i: host.nextId++, k: "M", st: 0, at: at("S", 0), n: t - 3500 }, { i: host.nextId++, k: "M", st: 0, at: at("S", 1), n: t - 1500 });
+  host.items.push({ i: host.nextId++, k: "L", st: 0, at: at("K", 0), n: 3 }, { i: host.nextId++, k: "T", st: 0, at: at("K", 1), n: 1 });
+  host.items.push({ i: host.nextId++, k: "P", st: 0, at: at("#", 5), n: "b" });
+}
+
+// ── SCENE ───────────────────────────────────────────────────────────────────────────
+const TS = 1.6; // world units per tile
+const wx = (x) => (x - KW / 2) * TS, wz = (y) => (y - KH / 2) * TS;
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color("#2b2140");
+const camera = new THREE.PerspectiveCamera(38, 1, 0.5, 200);
+scene.add(new THREE.HemisphereLight("#fff6e8", "#4a3a5a", 1.6));
+const sun = new THREE.DirectionalLight("#fff1d6", 1.6); sun.position.set(-6, 16, 8); sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left: -11, right: 11, top: 9, bottom: -9 }); scene.add(sun);
+function canvasTex(w, h, paint) { const c = document.createElement("canvas"); c.width = w; c.height = h; paint(c.getContext("2d"), w, h); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; }
+const floorTex = canvasTex(KW * 32, KH * 32, (c) => { for (let y = 0; y < KH * 2; y++) for (let x = 0; x < KW * 2; x++) { c.fillStyle = (x + y) % 2 ? "#e9e2d0" : "#c9d8e8"; c.fillRect(x * 16, y * 16, 16, 16); } });
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(KW * TS, KH * TS), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.9 }));
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+const wall = new THREE.Mesh(new THREE.BoxGeometry(KW * TS + 0.4, 3, 0.3), new THREE.MeshStandardMaterial({ color: "#7a5a9a" }));
+wall.position.set(0, 1.5, wz(0) - 0.15); scene.add(wall);
+const mats = new Map();
+const mat = (color, glow = 0) => { const k = color + glow; if (!mats.has(k)) mats.set(k, new THREE.MeshStandardMaterial({ color, roughness: 0.6, emissive: glow ? color : "#000", emissiveIntensity: glow })); return mats.get(k); };
+function mesh(geo, material, x, y, z, parent, shadow = true) { const m = new THREE.Mesh(geo, material); m.position.set(x, y, z); m.castShadow = shadow; m.receiveShadow = true; parent.add(m); return m; }
+const G = {
+  counter: new THREE.BoxGeometry(TS, 0.9, TS), top: new THREE.BoxGeometry(TS + 0.04, 0.12, TS + 0.04), crate: new THREE.BoxGeometry(TS * 0.8, 0.3, TS * 0.8),
+  board: new THREE.BoxGeometry(TS * 0.7, 0.06, TS * 0.5), knife: new THREE.BoxGeometry(0.08, 0.04, 0.5), burner: new THREE.CylinderGeometry(0.42, 0.42, 0.04, 20), pan: new THREE.CylinderGeometry(0.45, 0.38, 0.12, 20),
+  plate: new THREE.CylinderGeometry(0.34, 0.28, 0.06, 20), bin: new THREE.CylinderGeometry(0.55, 0.45, 1.0, 16), post: new THREE.BoxGeometry(0.12, 1.4, 0.12), sign: new THREE.BoxGeometry(TS * 0.9, 0.35, 0.1),
+  ball: new THREE.SphereGeometry(1, 14, 10), leaf: new THREE.IcosahedronGeometry(1, 0), patty: new THREE.CylinderGeometry(0.24, 0.24, 0.09, 16), slice: new THREE.CylinderGeometry(0.13, 0.13, 0.04, 12),
+  bunTop: new THREE.SphereGeometry(0.26, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), bunBase: new THREE.CylinderGeometry(0.26, 0.24, 0.08, 14),
+  body: new THREE.CylinderGeometry(0.3, 0.36, 0.7, 14), head: new THREE.SphereGeometry(0.27, 16, 12), hat: new THREE.CylinderGeometry(0.22, 0.2, 0.3, 14), hatTop: new THREE.SphereGeometry(0.27, 14, 8),
+  hand: new THREE.SphereGeometry(0.09, 8, 6), eye: new THREE.SphereGeometry(0.04, 6, 4), bar: new THREE.PlaneGeometry(1, 0.14), blob: new THREE.CircleGeometry(0.42, 18),
+};
+const tileTop = 0.96; // where things sit on a counter
+// The stations, built once from CONFIG.layout
+const glowMat = new THREE.MeshBasicMaterial({ color: "#fff", transparent: true, opacity: 0.35, depthWrite: false });
+const stationGlow = new THREE.Mesh(new THREE.BoxGeometry(TS + 0.08, 1.0, TS + 0.08), glowMat); scene.add(stationGlow);
+const burners = new Map();
+const signMat = new THREE.MeshStandardMaterial({ map: canvasTex(128, 48, (c) => { c.fillStyle = "#ff5a5a"; c.fillRect(0, 0, 128, 48); c.fillStyle = "#fff"; c.font = "bold 30px system-ui"; c.textAlign = "center"; c.fillText("SERVE", 64, 35); }) });
+for (let y = 0; y < KH; y++) for (let x = 0; x < KW; x++) {
+  const ch = LAYOUT[y][x]; if (ch === ".") continue;
+  const g = new THREE.Group(), kind = KINDS[ch]; g.position.set(wx(x + 0.5), 0, wz(y + 0.5)); scene.add(g);
+  if (kind === "bin") { mesh(G.bin, mat("#7c8794"), 0, 0.5, 0, g); mesh(G.burner, mat("#4a525c"), 0, 1.0, 0, g).scale.set(1.3, 1, 1.3); continue; }
+  mesh(G.counter, mat(kind === "stove" ? "#3a3f4a" : "#b88a5a"), 0, 0.45, 0, g);
+  mesh(G.top, mat(kind === "stove" ? "#59606e" : kind === "window" ? "#ffd23f" : "#efe4cf"), 0, 0.9, 0, g);
+  if (kind === "crate") {
+    mesh(G.crate, mat("#9c6b3c"), 0, 1.05, 0, g);
+    for (let i = 0; i < 3; i++) foodMesh(ch, 0, "", g).position.set(-0.35 + i * 0.35, 1.2, (i % 2) * 0.2 - 0.1);
+  } else if (kind === "board") { mesh(G.board, mat("#d9a066"), 0, 0.99, 0, g); mesh(G.knife, mat("#cfd6e0"), 0.5, 1.02, 0, g); }
+  else if (kind === "stove") { burners.set(y * KW + x, mesh(G.burner, mat("#222"), 0, 0.97, 0, g)); mesh(G.pan, mat("#2b2f36"), 0, 1.04, 0, g); }
+  else if (kind === "plates") for (let i = 0; i < 4; i++) mesh(G.plate, mat("#ffffff"), 0, 1.0 + i * 0.07, 0, g);
+  else if (kind === "window") { for (const s of [-1, 1]) mesh(G.post, mat("#ffd23f"), s * TS * 0.45, 1.6, 0, g); mesh(G.sign, signMat, 0, 2.3, 0, g); mesh(G.hand, mat("#ffd23f", 0.3), 0.3, 1.02, 0.2, g).scale.setScalar(1.6); }
+}
+/** A piece of food (or a plate with food on it). k = L T M B P, st = 0 raw / 1 ready / 2 burnt, c = plate contents. */
+function foodMesh(k, st, c, parent) {
+  const g = new THREE.Group();
+  if (k === "L") { if (st === 0) mesh(G.leaf, mat("#6cc24a"), 0, 0, 0, g).scale.set(0.24, 0.2, 0.24); else for (let i = 0; i < 4; i++) mesh(G.leaf, mat("#7fd65a"), Math.cos(i * 1.6) * 0.12, 0, Math.sin(i * 1.6) * 0.12, g).scale.set(0.1, 0.05, 0.1); }
+  else if (k === "T") { if (st === 0) { mesh(G.ball, mat("#ff5a4a"), 0, 0, 0, g).scale.setScalar(0.19); mesh(G.leaf, mat("#3a8a2a"), 0, 0.18, 0, g).scale.set(0.07, 0.03, 0.07); } else for (let i = 0; i < 3; i++) mesh(G.slice, mat("#ff6a5a"), (i - 1) * 0.15, 0, 0, g); }
+  else if (k === "M") mesh(G.patty, mat(st === 2 ? "#1d1a1a" : st === 1 ? "#8a4b2a" : "#f08a8a"), 0, 0, 0, g);
+  else if (k === "B") { mesh(G.bunBase, mat("#e8b05a"), 0, -0.04, 0, g); mesh(G.bunTop, mat("#e8a64a"), 0, 0.0, 0, g); }
+  else if (k === "P") {
+    mesh(G.plate, mat("#ffffff"), 0, -0.05, 0, g);
+    let y = 0;
+    if (c.includes("b")) { mesh(G.bunBase, mat("#e8b05a"), 0, y, 0, g); y += 0.08; }
+    if (c.includes("m")) { mesh(G.patty, mat("#8a4b2a"), 0, y, 0, g); y += 0.08; }
+    if (c.includes("l")) { for (let i = 0; i < 4; i++) mesh(G.leaf, mat("#7fd65a"), Math.cos(i * 1.6) * 0.13, y, Math.sin(i * 1.6) * 0.13, g).scale.set(0.11, 0.05, 0.11); y += 0.06; }
+    if (c.includes("t")) { for (let i = 0; i < 3; i++) mesh(G.slice, mat("#ff6a5a"), (i - 1) * (c.includes("b") ? 0.08 : 0.15), y, 0, g); y += 0.05; }
+    if (c.includes("b")) mesh(G.bunTop, mat("#e8a64a"), 0, y, 0, g);
+  }
+  if (parent) parent.add(g); else scene.add(g);
+  return g;
+}
+const views = new Map(); // item id -> { g, sig }
+const bars = new Map();  // station -> progress bar
+function barFor(s) {
+  let b = bars.get(s);
+  if (!b) { b = new THREE.Group(); const bg = mesh(G.bar, new THREE.MeshBasicMaterial({ color: "#1b1530" }), 0, 0, 0, b, false), fg = mesh(G.bar, new THREE.MeshBasicMaterial({ color: "#52d273" }), 0, 0, 0.01, b, false); bg.scale.set(1.1, 1.3, 1); b.userData.fg = fg; b.position.set(wx(sx(s)), 2.0, wz(sy(s))); scene.add(b); bars.set(s, b); }
+  return b;
+}
+/** Chef models for everyone else (players and AI cooks), plus mine. */
+const chefs = new Map();
+function makeChef(color, name) {
+  const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
+  mesh(G.blob, new THREE.MeshBasicMaterial({ color: "#000", transparent: true, opacity: 0.2, depthWrite: false }), 0, 0.02, 0, g, false).rotation.x = -Math.PI / 2;
+  mesh(G.body, mat(color), 0, 0.45, 0, body); mesh(G.head, mat("#ffd9b8"), 0, 1.05, 0, body); mesh(G.hat, mat("#ffffff"), 0, 1.38, 0, body); mesh(G.hatTop, mat("#ffffff"), 0, 1.55, 0, body).scale.set(1, 0.6, 1);
+  for (const s of [-1, 1]) { mesh(G.eye, mat("#222"), s * 0.1, 1.08, 0.24, body, false); mesh(G.hand, mat("#ffd9b8"), s * 0.3, 0.7, 0.3, body); }
+  if (name) {
+    const tex = canvasTex(256, 64, (c) => { c.font = "bold 30px system-ui"; c.textAlign = "center"; c.lineWidth = 6; c.strokeStyle = "#000a"; c.strokeText(name, 128, 44); c.fillStyle = "#fff"; c.fillText(name, 128, 44); });
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false })); tag.scale.set(2.6, 0.65, 1); tag.position.y = 2.1; g.add(tag);
+  }
+  scene.add(g); return { g, body, x: 0, y: 0, f: 0, fresh: true };
+}
+function placeChef(c, x, y, f, dt, moving) {
+  if (c.fresh) { c.x = x; c.y = y; c.f = f; c.fresh = false; }
+  const k = 1 - Math.pow(0.0008, dt); c.x += (x - c.x) * k; c.y += (y - c.y) * k; c.f += Math.atan2(Math.sin(f - c.f), Math.cos(f - c.f)) * k;
+  c.g.position.set(wx(c.x), 0, wz(c.y)); c.g.rotation.y = Math.PI / 2 - c.f;
+  c.body.position.y = moving ? Math.abs(Math.sin(performance.now() / 90)) * 0.08 : 0;
+}
+/** Where an item is drawn: on its station, or in front of the chef holding it. */
+function itemSpot(it) {
+  if (typeof it.at === "number") return { x: wx(sx(it.at)), y: tileTop + 0.08, z: wz(sy(it.at)) };
+  const c = it.at === net.sessionId ? myChef : chefs.get(it.at);
+  if (!c) return null;
+  return { x: wx(c.x + Math.cos(c.f) * 0.42), y: 0.95 + c.body.position.y, z: wz(c.y + Math.sin(c.f) * 0.42) };
+}
+function syncItems(now) {
+  const t = Date.now(), seen = new Set(), list = itemList();
+  for (const it of list) {
+    const sig = it.k + it.st + (it.k === "P" ? it.n : "");
+    let v = views.get(it.i);
+    if (v && v.sig !== sig) { scene.remove(v.g); v = null; }
+    if (!v) { v = { g: foodMesh(it.k, it.st, it.k === "P" ? it.n : ""), sig }; views.set(it.i, v); }
+    const p = itemSpot(it); v.g.visible = !!p; if (p) v.g.position.lerp(new THREE.Vector3(p.x, p.y, p.z), v.placed ? 0.35 : 1); v.placed = !!p;
+    seen.add(it.i);
+  }
+  for (const [i, v] of views) if (!seen.has(i)) { scene.remove(v.g); views.delete(i); }
+  // progress bars: chopping and cooking
+  const live = new Set();
+  for (const it of list) {
+    if (typeof it.at !== "number") continue;
+    let pct = -1, color = "#52d273";
+    if (kindAt(it.at) === "board" && (it.k === "L" || it.k === "T") && it.st === 0 && it.n > 0) pct = it.n / CONFIG.chops;
+    if (kindAt(it.at) === "stove" && it.k === "M") { const c = t - it.n; if (c < CONFIG.cookMs) pct = c / CONFIG.cookMs; else if (c < CONFIG.burnMs) { pct = (c - CONFIG.cookMs) / (CONFIG.burnMs - CONFIG.cookMs); color = Math.floor(now / 150) % 2 && pct > 0.5 ? "#ff4040" : "#ffb020"; } if (Math.random() < 0.15) puff(wx(sx(it.at)), 1.3, wz(sy(it.at)), c > CONFIG.burnMs ? "#333" : "#ddd"); }
+    if (pct < 0) continue;
+    const b = barFor(it.at); live.add(it.at);
+    b.quaternion.copy(camera.quaternion); b.userData.fg.scale.x = Math.max(0.02, Math.min(1, pct)); b.userData.fg.position.x = -(1 - Math.min(1, pct)) / 2; b.userData.fg.material.color.set(color);
+  }
+  for (const [s, b] of bars) b.visible = live.has(s);
+  for (const [s, m] of burners) { const cooking = list.some((it) => it.at === s && it.k === "M"); m.material = cooking ? mat("#ff7a1a", 0.9) : mat("#222"); }
+}
+// Particles: little cubes (steam, chop bits, sparkles).
+const PMAX = 300, parts = [], dummy = new THREE.Object3D();
+const pMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.85 }), PMAX);
+pMesh.setColorAt(0, new THREE.Color("#fff")); pMesh.count = 0; pMesh.frustumCulled = false; scene.add(pMesh);
+function burst(x, y, z, color, n = 10, speed = 3, size = 0.12, up = 1) { for (let i = 0; i < n && parts.length < PMAX; i++) { const a = Math.random() * 6.28, u = Math.random(); parts.push({ x, y, z, vx: Math.cos(a) * speed * u, vy: speed * up * (0.4 + Math.random()), vz: Math.sin(a) * speed * u, life: 0, max: 0.5 + Math.random() * 0.4, size, g: 9, color: new THREE.Color(color) }); } }
+const puff = (x, y, z, color) => { if (parts.length < PMAX) parts.push({ x: x + (Math.random() - 0.5) * 0.4, y, z: z + (Math.random() - 0.5) * 0.4, vx: 0, vy: 0.9, vz: 0, life: 0, max: 1.1, size: 0.14, g: -0.5, color: new THREE.Color(color) }); };
+function partsTick(dt) {
+  let n = 0;
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.life += dt; if (p.life >= p.max) { parts.splice(i, 1); continue; }
+    p.vy -= p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+    dummy.position.set(p.x, p.y, p.z); dummy.scale.setScalar(p.size * (1 - p.life / p.max * 0.7)); dummy.rotation.set(p.life * 5, p.life * 3, 0); dummy.updateMatrix();
+    pMesh.setMatrixAt(n, dummy.matrix); pMesh.setColorAt(n, p.color); n++;
+  }
+  pMesh.count = n; pMesh.instanceMatrix.needsUpdate = true; if (pMesh.instanceColor) pMesh.instanceColor.needsUpdate = true;
+}
+function showFx(m) {
+  if (!m || !STATIONS.includes(m.s)) return;
+  const x = wx(sx(m.s)), z = wz(sy(m.s));
+  if (m.kind === "chop") burst(x, 1.1, z, Math.random() < 0.5 ? "#7fd65a" : "#ff6a5a", 4, 2, 0.08);
+  if (m.kind === "served") { burst(x, 1.4, z, "#ffd23f", 26, 5, 0.14); toast(`+${m.n}`); }
+  if (m.kind === "wrong") toast("No ticket wants that plate");
+  if (m.kind === "bin") burst(x, 1.2, z, "#9aa3ad", 8, 2);
+}
+
+// ── ME ──────────────────────────────────────────────────────────────────────────────
+const myName = (() => { try { return localStorage.getItem("mpa-name") || ""; } catch { return ""; } })() ||
+  ["Brave", "Clever", "Sunny", "Swift", "Lucky", "Mighty"][Math.floor(Math.random() * 6)] + " " + ["Otter", "Fox", "Badger", "Owl", "Panda", "Llama"][Math.floor(Math.random() * 6)];
+let myColor = COLORS[0]; // picked on join: the first color nobody in the room has
+const me = { id: "", x: 2.5, y: 2.5, f: 0, roundId: -1, lastSend: 0, sent: "", task: null, wait: 0, taskAt: 0 };
+let myChef = null;
+const input = { x: 0, y: 0, grab: false, chop: false, chopAt: 0 };
+/** The station I'm facing: the closest one in front of me, within reach. */
+function target() {
+  let best = null, bd = 9;
+  for (const s of STATIONS) {
+    const dx = sx(s) - me.x, dy = sy(s) - me.y, d = Math.hypot(dx, dy); if (d > 1.35) continue;
+    const off = Math.abs(Math.atan2(Math.sin(Math.atan2(dy, dx) - me.f), Math.cos(Math.atan2(dy, dx) - me.f)));
+    if (off < 1.2 && d + off < bd) { bd = d + off; best = s; }
+  }
+  return best;
+}
+const act = (type, s) => (isHost() ? applyIntent(type, { s }, net.sessionId) : net.send(type, { s }));
+/** Space / GRAB: pick up, put down, combine onto a plate, or serve, depending on what you hold and face. */
+function useStation() {
+  const s = target(); if (s === null) return;
+  const h = heldBy(net.sessionId), it = itemOn(s);
+  if (h && h.k === "P" && kindAt(s) === "window") act("serve", s);
+  else if (!h || it || (h.k === "P" && charAt(s) === "B")) act("grab", s);
+  else act("drop", s);
+}
+function myTick(dt, g) {
+  if (me.roundId !== g.id) { me.roundId = g.id; Object.assign(me, spawnSpot(livePlayers().indexOf(net.sessionId) + (ATTRACT ? 1 : 0))); }
+  if (ATTRACT && g.phase === "play" && isHost()) { me.id = net.sessionId; cookTick(me, dt, Date.now(), (type, s) => applyIntent(type, { s }, net.sessionId)); }
+  else if (g.phase === "play") {
+    const az = camAz(), cs = Math.cos(az), sn = Math.sin(az), mx = input.x * cs - input.y * sn, my = input.x * sn + input.y * cs, len = Math.hypot(mx, my);
+    if (len > 0.15) { const k = Math.min(1, len); moveBody(me, (mx / len) * k * CONFIG.speed * dt, (my / len) * k * CONFIG.speed * dt); me.f = Math.atan2(my, mx); }
+    if (input.grab) { input.grab = false; useStation(); }
+    if (input.chop && performance.now() > input.chopAt) { input.chopAt = performance.now() + 200; const s = target(); if (s !== null) act("chop", s); }
+  }
+  const p = JSON.stringify({ x: +me.x.toFixed(2), y: +me.y.toFixed(2), f: +me.f.toFixed(2) }), now = performance.now();
+  if (p !== me.sent && now - me.lastSend > 80) { me.sent = p; me.lastSend = now; net.me.set("p", p); }
+}
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+let boardApi = null, boardFor = -1, toastTimer = 0, hintUntil = 0, shownOrders = "";
+function toast(text) { $("toast").textContent = text; $("toast").style.opacity = 1; clearTimeout(toastTimer); toastTimer = setTimeout(() => ($("toast").style.opacity = 0), 1200); }
+function hud(g) {
+  const t = Date.now();
+  if (ATTRACT) { for (const id of ["score", "clock", "net", "hint", "count"]) $(id).style.display = "none"; }
+  $("score").innerHTML = `${g.score}<small>${g.served} served${g.missed ? ` · ${g.missed} missed` : ""}</small>`;
+  const left = Math.max(0, (g.phase === "play" ? g.endsAt : g.phase === "ready" ? g.endsAt : 0) - t);
+  $("clock").textContent = g.phase === "over" ? "" : `${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, "0")}`;
+  $("clock").classList.toggle("low", g.phase === "play" && left < 30000);
+  const key = g.orders.map((o) => o.id).join(",");
+  if (key !== shownOrders) { shownOrders = key; $("orders").innerHTML = g.orders.map((o) => { const R = CONFIG.recipes[o.r]; return `<div class="ticket"><b>${esc(R.name)}</b>${[...R.parts].map((c) => `<i style="background:${PART[c].color}" title="${PART[c].name}"></i>`).join("")}<u data-o="${o.id}"></u></div>`; }).join(""); }
+  for (const u of $("orders").querySelectorAll("u")) { const o = g.orders.find((x) => x.id === +u.dataset.o); if (!o) continue; const k = Math.max(0, (o.until - t) / CONFIG.orderMs); u.style.width = `${k * 100}%`; u.style.background = k < 0.25 ? "#ff5a5a" : k < 0.5 ? "#ffb020" : "#52d273"; }
+  $("count").textContent = g.phase === "ready" ? String(Math.max(1, Math.ceil((g.startAt - t) / 1000))) : g.phase === "play" && t - g.startAt < 900 ? "Service!" : "";
+  const n = humans().length;
+  $("net").textContent = ATTRACT ? "" : net.offline ? "Offline: playing with bots" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the kitchen" : ""}`;
+  $("hint").style.opacity = performance.now() < hintUntil ? 1 : 0;
+  $("over").hidden = g.phase !== "over" || ATTRACT;
+  if (g.phase === "over") {
+    $("overTitle").textContent = `Kitchen closed! ${g.score} points`;
+    $("overSub").textContent = `${g.served} orders served · ${g.missed} missed`;
+    $("overNext").textContent = `Next service in ${Math.max(0, Math.ceil((g.endsAt - t) / 1000))}s`;
+    if (boardFor !== g.id) { boardFor = g.id; showBoard(g.score); }
+  }
+}
+function showBoard(score) {
+  const list = $("board");
+  if (!boardApi) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li>Loading…</li>";
+  (score > 0 ? boardApi.submit(score).catch(() => null) : Promise.resolve()).then(() => boardApi.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No scores yet. Set the first.</li>";
+  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+}
+$("again").onclick = () => act("again", 0);
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+const keys = new Set(), touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
+$("pad").hidden = !touchUI;
+addEventListener("keydown", (e) => {
+  const k = e.key.toLowerCase(); if (k === " " || k.startsWith("arrow")) e.preventDefault();
+  if (!keys.has(k) && (k === " " || k === "f")) input.grab = true;
+  keys.add(k);
+});
+addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+addEventListener("blur", () => keys.clear());
+function readKeys() {
+  if (stick.id !== null) return;
+  input.x = (keys.has("d") || keys.has("arrowright") ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") ? 1 : 0);
+  input.y = (keys.has("s") || keys.has("arrowdown") ? 1 : 0) - (keys.has("w") || keys.has("arrowup") ? 1 : 0);
+  if (!padChop) input.chop = keys.has("e") || keys.has("c");
+}
+const stick = { id: null, x: 0, y: 0 }, cv = renderer.domElement;
+cv.addEventListener("pointerdown", (e) => { e.preventDefault(); if (e.pointerType === "mouse") return; stick.id = e.pointerId; stick.x = e.clientX; stick.y = e.clientY; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", (e) => { if (e.pointerId !== stick.id) return; const dx = e.clientX - stick.x, dy = e.clientY - stick.y, d = Math.hypot(dx, dy); input.x = d > 8 ? dx / Math.max(d, 40) : 0; input.y = d > 8 ? dy / Math.max(d, 40) : 0; });
+for (const ev of ["pointerup", "pointercancel"]) cv.addEventListener(ev, (e) => { if (e.pointerId === stick.id) { stick.id = null; input.x = input.y = 0; } });
+let padChop = false;
+for (const b of document.querySelectorAll(".pad button")) {
+  const k = b.dataset.k;
+  b.addEventListener("pointerdown", (e) => { e.preventDefault(); b.classList.add("on"); if (k === "grab") input.grab = true; else padChop = input.chop = true; });
+  for (const ev of ["pointerup", "pointercancel", "pointerleave"]) b.addEventListener(ev, () => { b.classList.remove("on"); if (k === "chop") padChop = input.chop = false; });
+}
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+function fit() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+/** On a tall screen the camera turns a quarter so the long side of the kitchen runs up the phone. */
+const camAz = () => (innerHeight > innerWidth * 1.1 ? -Math.PI / 2 : 0);
+function placeCamera(now) {
+  const az = camAz(), tall = az !== 0, elev = 1.0, vf = (camera.fov * Math.PI) / 360, hf = Math.atan(Math.tan(vf) * camera.aspect);
+  const across = ((tall ? KH : KW) + 1) * TS / 2, deep = ((tall ? KW : KH) + 2.5) * TS / 2;
+  const dist = Math.max(across / Math.tan(hf), (deep * Math.sin(elev) + 1.5) / Math.tan(vf)) * (ATTRACT ? 0.76 : 1);
+  const sway = ATTRACT ? Math.sin(now / 2400) * 0.1 : 0, lz = tall ? 0 : ATTRACT ? 0.2 : 0.6;
+  camera.position.set(Math.sin(sway - az) * Math.cos(elev) * dist, Math.sin(elev) * dist, Math.cos(sway - az) * Math.cos(elev) * dist + lz);
+  camera.lookAt(0, 0, lz);
+}
+/** The room's state can arrive just after we join: if someone (or a bot) already had my color, take a free one. */
+function fixMyColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId), bots = botList();
+  if (!others.some(([id, p]) => p.c === myColor && id < net.sessionId) && !bots.some((b) => b.c === myColor)) return;
+  const taken = new Set([...others.map(([, p]) => p.c), ...bots.map((b) => b.c)]);
+  myColor = COLORS.find((c) => !taken.has(c)) || myColor; net.me.set("c", myColor);
+  if (myChef) { scene.remove(myChef.g); myChef = null; }
+}
+let last = performance.now(), lastHb = 0, lastHud = 0;
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixMyColor(); }
+  readKeys();
+  if (isHost()) hostTick(dt, now); else host.wasHost = false;
+  const g = game();
+  placeCamera(now);
+  if (g) {
+    myTick(dt, g);
+    if (!myChef) myChef = makeChef(myColor, "");
+    placeChef(myChef, me.x, me.y, me.f, 1, input.x || input.y || (ATTRACT && me.task));
+    const seen = new Set();
+    for (const [id, p] of Object.entries(S.entities.players || {})) {
+      if (id === net.sessionId) continue;
+      const q = parse(p.p, null); if (!q) continue;
+      seen.add(id); let c = chefs.get(id); if (!c) { c = makeChef(p.c || "#ccc", p.n || "Player"); chefs.set(id, c); }
+      placeChef(c, q.x, q.y, q.f, dt, Math.hypot(q.x - c.x, q.y - c.y) > 0.05);
+    }
+    for (const b of botList()) { seen.add(b.i); let c = chefs.get(b.i); if (!c) { c = makeChef(b.c, ATTRACT ? "" : b.n); chefs.set(b.i, c); } placeChef(c, b.x, b.y, b.f, dt, Math.hypot(b.x - c.x, b.y - c.y) > 0.05); }
+    for (const [id, c] of chefs) if (!seen.has(id)) { scene.remove(c.g); chefs.delete(id); }
+    syncItems(now);
+    const s = g.phase === "play" && !ATTRACT ? target() : null;
+    stationGlow.visible = s !== null; if (s !== null) stationGlow.position.set(wx(sx(s)), 0.5, wz(sy(s)));
+    glowMat.opacity = 0.25 + Math.sin(now / 150) * 0.1;
+    if (now - lastHud > 120) { lastHud = now; hud(g); }
+  }
+  partsTick(dt);
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+(async function start() {
+  if (ATTRACT) CONFIG.seats = 3;
+  net = await connect();
+  net.onState((st) => { S = st; });
+  for (const type of ["grab", "drop", "chop", "serve", "again"]) net.on(type, (m, from) => { if (isHost()) applyIntent(type, m || {}, from); });
+  net.on("fx", (m) => showFx(m));
+  net.onDisconnect(() => { $("net").textContent = "Reconnecting…"; });
+  if (!net.offline && typeof MP !== "undefined") boardApi = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const taken = new Set([...Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c), ...parse(S.shared.bots, []).map((b) => b.c)]);
+  myColor = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+  net.me.set({ n: myName, c: myColor, hb: Date.now() });
+  $("hint").textContent = touchUI ? "Drag to walk. GRAB picks up, puts down and serves; hold CHOP at a board. Build what the tickets ask for and serve it at the yellow window." : "WASD to walk, Space to pick up, put down or serve, hold E to chop. Build what the tickets ask for and serve it at the yellow window.";
+  hintUntil = performance.now() + 14000;
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

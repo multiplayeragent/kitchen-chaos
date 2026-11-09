@@ -1,0 +1,21 @@
+{
+  "name": "Kitchen Chaos",
+  "genre": "sim",
+  "dim": "3D",
+  "mode": "Co-op",
+  "players": "2–4",
+  "hook": "Chop, cook and serve before orders run out.",
+  "how": "Tickets come in for salads and burgers. Grab from the crates, chop at the board, cook meat on the stove before it burns, stack it all on a plate and serve it at the window. Late tickets cost points. A round lasts 3 minutes.",
+  "controls": "WASD, Space to grab, put down or serve, hold E to chop. On a phone: drag to walk, GRAB and CHOP buttons",
+  "uses": [
+    ["Host-run rules", "The host's browser keeps every ingredient, timer, ticket and the score; if it leaves, the next player takes over."],
+    ["Leaderboard", "The team's score at the end of a round."],
+    ["Bots", "AI cooks pick up the next job the tickets need until enough people join."],
+    ["Live sync", "Everyone sees the same kitchen, every chop and every sizzle."]
+  ],
+  "ideas": [
+    "Add a fire you put out with an extinguisher",
+    "Add a level where the counters move",
+    "Turn it into a pizza shop"
+  ]
+}
