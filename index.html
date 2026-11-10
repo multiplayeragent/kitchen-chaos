@@ -25,7 +25,7 @@
   #toast { top: 30%; left: 0; right: 0; text-align: center; font-size: 24px; opacity: 0; transition: opacity .3s; }
   #over { position: fixed; inset: 0; display: grid; place-items: center; background: #0007; }
   #over[hidden], .pad[hidden] { display: none; }
-  .card { width: min(340px, 88vw); padding: 22px; border-radius: 16px; background: #2b2140; border: 1px solid #ffffff2a; text-align: center; }
+  .card { box-sizing: border-box; width: min(386px, calc(100vw - 32px)); padding: 22px; border-radius: 16px; background: #2b2140; border: 1px solid #ffffff2a; text-align: center; }
   .card h2 { margin: 0 0 4px; font-size: 23px; } .card h3 { margin: 14px 0 4px; font-size: 14px; color: #ffd23f; }
   .card ol { text-align: left; margin: 0 0 14px; padding-left: 26px; font-size: 14px; } .card li span { float: right; }
   .card p { margin: 6px 0; font-size: 14px; opacity: .85; }
@@ -214,7 +214,7 @@ function nextStep(x, y, gx, gy) {
 // ── GAME (HOST) ─────────────────────────────────────────────────────────────────────
 // An item: { i, k: "L"|"T"|"M"|"B"|"P", st: 0 raw, 1 ready, 2 burnt, at: station index or a chef's id, n: chops, cook start or plate contents }
 const host = { g: null, items: [], bots: new Map(), wasHost: false, dirtyG: false, dirtyI: false, lastG: 0, lastI: 0, lastB: 0, nextId: 1 };
-const hosting = () => isHost() && host.g;
+const hosting = () => isHost() && host.wasHost && host.g; // wasHost: adopted (not leftovers from an earlier turn as host)
 const game = () => (hosting() ? host.g : shared("game", null));
 const itemList = () => (hosting() ? host.items : shared("items", [], (l) => l.map(([i, k, st, at, n]) => ({ i, k, st, at, n }))));
 const botList = () => (hosting() ? [...host.bots.values()].map((b) => ({ i: b.id, n: b.n, c: b.c, x: b.x, y: b.y, f: b.f })) : shared("bots", []));
@@ -610,6 +610,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 let boardApi = null, boardFor = -1, toastTimer = 0, hintUntil = 0, shownOrders = "";
 function toast(text) { $("toast").textContent = text; $("toast").style.opacity = 1; clearTimeout(toastTimer); toastTimer = setTimeout(() => ($("toast").style.opacity = 0), 1200); }
+let dropped = false; // true while the connection is down: the HUD keeps showing "Reconnecting…"
 function hud(g) {
   const t = Date.now();
   if (ATTRACT) { for (const id of ["score", "clock", "net", "hint", "count"]) $(id).style.display = "none"; }
@@ -622,7 +623,7 @@ function hud(g) {
   for (const u of $("orders").querySelectorAll("u")) { const o = g.orders.find((x) => x.id === +u.dataset.o); if (!o) continue; const k = Math.max(0, (o.until - t) / CONFIG.orderMs); u.style.width = `${k * 100}%`; u.style.background = k < 0.25 ? "#ff5a5a" : k < 0.5 ? "#ffb020" : "#52d273"; }
   $("count").textContent = g.phase === "ready" ? String(Math.max(1, Math.ceil((g.startAt - t) / 1000))) : g.phase === "play" && t - g.startAt < 900 ? "Service!" : "";
   const n = humans().length;
-  $("net").textContent = ATTRACT ? "" : net.offline ? "Offline: playing with bots" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the kitchen" : ""}`;
+  $("net").textContent = ATTRACT ? "" : net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the kitchen" : ""}`;
   $("hint").style.opacity = performance.now() < hintUntil ? 1 : 0;
   $("over").hidden = g.phase !== "over" || ATTRACT;
   if (g.phase === "over") {
@@ -693,7 +694,7 @@ function fixMyColor() {
 }
 let last = performance.now(), lastHb = 0, lastHud = 0;
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // never negative: the first frame can be stamped before `last`
   if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixMyColor(); }
   readKeys();
   if (isHost()) hostTick(dt, now); else host.wasHost = false;
@@ -703,9 +704,9 @@ function frame(now) {
     myTick(dt, g);
     if (!myChef) myChef = makeChef(myColor, "");
     placeChef(myChef, me.x, me.y, me.f, 1, input.x || input.y || (ATTRACT && me.task));
-    const seen = new Set();
+    const seen = new Set(), live = new Set(livePlayers()); // a closed tab's entity lingers ~30s: draw only live players
     for (const [id, p] of Object.entries(S.entities.players || {})) {
-      if (id === net.sessionId) continue;
+      if (id === net.sessionId || !live.has(id)) continue;
       const q = parse(p.p, null); if (!q) continue;
       seen.add(id); let c = chefs.get(id); if (!c) { c = makeChef(p.c || "#ccc", p.n || "Player"); chefs.set(id, c); }
       placeChef(c, q.x, q.y, q.f, dt, Math.hypot(q.x - c.x, q.y - c.y) > 0.05);
@@ -729,7 +730,8 @@ function frame(now) {
   net.onState((st) => { S = st; });
   for (const type of ["grab", "drop", "chop", "serve", "again"]) net.on(type, (m, from) => { if (isHost()) applyIntent(type, m || {}, from); });
   net.on("fx", (m) => showFx(m));
-  net.onDisconnect(() => { $("net").textContent = "Reconnecting…"; });
+  net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { dropped = false; });
   if (!net.offline && typeof MP !== "undefined") boardApi = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
   const taken = new Set([...Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c), ...parse(S.shared.bots, []).map((b) => b.c)]);
   myColor = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
