@@ -181,7 +181,8 @@ function livePlayers() {
   }
   return out.sort();
 }
-const isHost = () => livePlayers()[0] === net.sessionId;
+let wakeHold = 0, lastFrameAt = 0; // a tab whose frames stopped (frozen, or in the background) doesn't act as host, nor for 700ms after it wakes (see frame())
+const isHost = () => livePlayers()[0] === net.sessionId && performance.now() >= wakeHold && !(lastFrameAt && performance.now() - lastFrameAt > 1000);
 const humans = () => livePlayers().filter((id) => !(ATTRACT && id === net.sessionId));
 
 // ── KITCHEN ─────────────────────────────────────────────────────────────────────────
@@ -308,7 +309,7 @@ function hostTick(dt, now) {
   const chefsHere = new Set([...livePlayers(), ...host.bots.keys()]);
   for (const it of host.items.filter((it) => typeof it.at === "string" && !chefsHere.has(it.at))) { removeItem(it); host.dirtyI = true; } // dropped by someone who left
   botsTick(dt, t);
-  if (host.dirtyG && now - host.lastG > 150) { host.dirtyG = false; host.lastG = now; host.g.v++; net.setShared("game", JSON.stringify(host.g)); }
+  if (host.dirtyG && now - host.lastG > 150) { host.dirtyG = false; host.lastG = now; host.g.v = Math.max(host.g.v, shared("game", null)?.v || 0) + 1; net.setShared("game", JSON.stringify(host.g)); }
   if (host.dirtyI && now - host.lastI > 80) { host.dirtyI = false; host.lastI = now; net.setShared("items", JSON.stringify(host.items.map((it) => [it.i, it.k, it.st, it.at, it.n]))); }
   if (now - host.lastB > 90) { host.lastB = now; net.setShared("bots", JSON.stringify(botList().map((b) => ({ ...b, x: +b.x.toFixed(2), y: +b.y.toFixed(2), f: +b.f.toFixed(2) })))); }
 }
@@ -695,6 +696,8 @@ function fixMyColor() {
 let last = performance.now(), lastHb = 0, lastHud = 0;
 function frame(now) {
   requestAnimationFrame(frame);
+  const realNow = performance.now(); // timed on the real clock: after a long freeze the rAF time can be from before the wake
+  if (lastFrameAt && realNow - lastFrameAt > 1000) { wakeHold = realNow + 700; host.wasHost = false; } lastFrameAt = realNow; // woke from a freeze or a background tab: another player may have run the kitchen meanwhile, so let their state arrive, then adopt it like a new host
   const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // never negative: the first frame can be stamped before `last`
   if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixMyColor(); }
   readKeys();
