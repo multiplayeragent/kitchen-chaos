@@ -21,7 +21,7 @@
   @keyframes drop { from { transform: translateY(-30px); opacity: 0; } }
   #net { bottom: max(10px, env(safe-area-inset-bottom)); left: max(14px, env(safe-area-inset-left)); font-size: 12px; font-weight: 600; opacity: .8; }
   #count { inset: 0; display: grid; place-items: center; font-size: min(18vw, 120px); color: #ffd23f; -webkit-text-stroke: 3px #5a2a00; }
-  #hint { bottom: calc(max(12px, env(safe-area-inset-bottom)) + 120px); left: 50%; transform: translateX(-50%); width: min(460px, 86vw); text-align: center; font-size: 15px; font-weight: 600; padding: 10px 14px; border-radius: 14px; background: #1b1530cc; transition: opacity .5s; }
+  #hint { bottom: calc(max(12px, env(safe-area-inset-bottom)) + 30px); left: 50%; transform: translateX(-50%); width: min(460px, 86vw); text-align: center; font-size: 15px; font-weight: 600; padding: 10px 14px; border-radius: 14px; background: #1b1530cc; transition: opacity .5s; }
   #toast { top: 30%; left: 0; right: 0; text-align: center; font-size: 24px; opacity: 0; transition: opacity .3s; }
   #over { position: fixed; inset: 0; display: grid; place-items: center; background: #0007; }
   #over[hidden], .pad[hidden] { display: none; }
@@ -33,7 +33,9 @@
   .pad { position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(20px, env(safe-area-inset-bottom)); display: flex; gap: 14px; align-items: flex-end; }
   .pad button { width: 84px; height: 84px; border-radius: 50%; border: 2px solid #ffffff88; background: #ffffff22; color: #fff; font: 800 14px system-ui, sans-serif; touch-action: none; }
   .pad button.on { background: #ffd23f66; }
+  @media (pointer: coarse) { #hint { bottom: calc(max(12px, env(safe-area-inset-bottom)) + 120px); } } /* above the CHOP/GRAB buttons */
   @media (max-aspect-ratio: 10/11) { #hint { top: 20%; bottom: auto; } }
+  .card li.msg { list-style: none; margin-left: -26px; text-align: center; } /* a status line, not a numbered entry */
 </style>
 <script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
 <script type="importmap">{ "imports": { "three": "./libs/three.module.min.js" } }</script>
@@ -49,7 +51,7 @@
 <div class="pad" id="pad" hidden><button data-k="chop">CHOP</button><button data-k="grab">GRAB</button></div>
 <div id="over" hidden><div class="card">
   <h2 id="overTitle"></h2><p id="overSub"></p>
-  <h3>Best kitchens</h3><ol id="board"><li>Loading…</li></ol>
+  <h3>Best kitchens</h3><ol id="board"><li class="msg">Loading…</li></ol>
   <button class="go" id="again">Play again</button><p id="overNext"></p>
 </div></div>
 <script type="module">
@@ -619,8 +621,9 @@ function hud(g) {
   const left = Math.max(0, (g.phase === "play" ? g.endsAt : g.phase === "ready" ? g.endsAt : 0) - t);
   $("clock").textContent = g.phase === "over" ? "" : `${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, "0")}`;
   $("clock").classList.toggle("low", g.phase === "play" && left < 30000);
-  const key = g.orders.map((o) => o.id).join(",");
-  if (key !== shownOrders) { shownOrders = key; $("orders").innerHTML = g.orders.map((o) => { const R = CONFIG.recipes[o.r]; return `<div class="ticket"><b>${esc(R.name)}</b>${[...R.parts].map((c) => `<i style="background:${PART[c].color}" title="${PART[c].name}"></i>`).join("")}<u data-o="${o.id}"></u></div>`; }).join(""); }
+  const orders = g.phase === "over" ? [] : g.orders; // the kitchen is closed: no tickets left hanging over the results
+  const key = orders.map((o) => o.id).join(",");
+  if (key !== shownOrders) { shownOrders = key; $("orders").innerHTML = orders.map((o) => { const R = CONFIG.recipes[o.r]; return `<div class="ticket"><b>${esc(R.name)}</b>${[...R.parts].map((c) => `<i style="background:${PART[c].color}" title="${PART[c].name}"></i>`).join("")}<u data-o="${o.id}"></u></div>`; }).join(""); }
   for (const u of $("orders").querySelectorAll("u")) { const o = g.orders.find((x) => x.id === +u.dataset.o); if (!o) continue; const k = Math.max(0, (o.until - t) / CONFIG.orderMs); u.style.width = `${k * 100}%`; u.style.background = k < 0.25 ? "#ff5a5a" : k < 0.5 ? "#ffb020" : "#52d273"; }
   $("count").textContent = g.phase === "ready" ? String(Math.max(1, Math.ceil((g.startAt - t) / 1000))) : g.phase === "play" && t - g.startAt < 900 ? "Service!" : "";
   const n = humans().length;
@@ -636,11 +639,11 @@ function hud(g) {
 }
 function showBoard(score) {
   const list = $("board");
-  if (!boardApi) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
-  list.innerHTML = "<li>Loading…</li>";
+  if (!boardApi) { list.innerHTML = "<li class=\"msg\">Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li class=\"msg\">Loading…</li>";
   (score > 0 ? boardApi.submit(score).catch(() => null) : Promise.resolve()).then(() => boardApi.top(10)).then(({ entries }) => {
-    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No scores yet. Set the first.</li>";
-  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li class=\"msg\">No scores yet. Set the first.</li>";
+  }).catch(() => { list.innerHTML = "<li class=\"msg\">Couldn't load the leaderboard.</li>"; });
 }
 $("again").onclick = () => act("again", 0);
 
@@ -653,7 +656,7 @@ addEventListener("keydown", (e) => {
   keys.add(k);
 });
 addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
-addEventListener("blur", () => keys.clear());
+addEventListener("blur", () => { keys.clear(); padChop = input.chop = false; for (const b of document.querySelectorAll(".pad button")) b.classList.remove("on"); }); // nothing stays held when the tab loses focus
 function readKeys() {
   if (stick.id !== null) return;
   input.x = (keys.has("d") || keys.has("arrowright") ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") ? 1 : 0);
@@ -671,6 +674,7 @@ for (const b of document.querySelectorAll(".pad button")) {
   for (const ev of ["pointerup", "pointercancel", "pointerleave"]) b.addEventListener(ev, () => { b.classList.remove("on"); if (k === "chop") padChop = input.chop = false; });
 }
 document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+cv.addEventListener("contextmenu", (e) => e.preventDefault()); // no browser menu on a right-click or a long press
 
 // ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
 function fit() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
