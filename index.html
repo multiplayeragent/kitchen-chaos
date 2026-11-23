@@ -35,6 +35,7 @@
   .pad button.on { background: #ffd23f66; }
   @media (pointer: coarse) { #hint { bottom: calc(max(12px, env(safe-area-inset-bottom)) + 120px); } } /* above the CHOP/GRAB buttons */
   @media (max-aspect-ratio: 10/11) { #hint { top: 20%; bottom: auto; } }
+  @media (max-width: 520px) { #orders { top: calc(max(12px, env(safe-area-inset-top)) + 54px); gap: 6px; } .ticket { width: 66px; padding: 5px 5px 7px; font-size: 11px; } .ticket b { font-size: 12px; } .ticket i { width: 12px; height: 12px; } } /* a phone: four tickets fit below the score and clock */
   .card li.msg { list-style: none; margin-left: -26px; text-align: center; } /* a status line, not a numbered entry */
 </style>
 <script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
@@ -98,6 +99,7 @@ const CONFIG = {
   tip: 10,
   missed: 10,            // points lost when a ticket runs out
   chops: 5,              // chops to cut a vegetable
+  chopGapMs: 120,        // the host ignores a chef's chops closer together than this (holding E chops every 200ms)
   cookMs: 5000,          // meat on the stove: cooked after this...
   burnMs: 12000,         // ...and burnt after this
   speed: 4.2,            // chef speed, tiles/s
@@ -216,7 +218,7 @@ function nextStep(x, y, gx, gy) {
 
 // ── GAME (HOST) ─────────────────────────────────────────────────────────────────────
 // An item: { i, k: "L"|"T"|"M"|"B"|"P", st: 0 raw, 1 ready, 2 burnt, at: station index or a chef's id, n: chops, cook start or plate contents }
-const host = { g: null, items: [], bots: new Map(), wasHost: false, dirtyG: false, dirtyI: false, lastG: 0, lastI: 0, lastB: 0, nextId: 1 };
+const host = { g: null, items: [], bots: new Map(), lastChop: new Map(), wasHost: false, dirtyG: false, dirtyI: false, lastG: 0, lastI: 0, lastB: 0, nextId: 1 };
 const hosting = () => isHost() && host.wasHost && host.g; // wasHost: adopted (not leftovers from an earlier turn as host)
 const game = () => (hosting() ? host.g : shared("game", null));
 const itemList = () => (hosting() ? host.items : shared("items", [], (l) => l.map(([i, k, st, at, n]) => ({ i, k, st, at, n }))));
@@ -264,6 +266,8 @@ function applyIntent(type, msg, from) {
   const kind = kindAt(s), h = host.items.find((it) => it.at === from), it = host.items.find((x) => x.at === s);
   const combine = (plate, food) => { const p = partOf(food); if (!p || !fits(plate.n, p)) return false; plate.n = sortStr(plate.n + p); removeItem(food); return true; };
   if (type === "chop") {
+    if (t - (host.lastChop.get(from) || 0) < CONFIG.chopGapMs) return; // one chop at a time, even from a hacked client
+    host.lastChop.set(from, t);
     if (kind === "board" && it && (it.k === "L" || it.k === "T") && it.st === 0) { it.n = (it.n || 0) + 1; if (it.n >= CONFIG.chops) it.st = 1; fx(from, "chop", s); }
   } else if (type === "grab") {
     if (!h && it) { offStove(it, t); it.at = from; }
